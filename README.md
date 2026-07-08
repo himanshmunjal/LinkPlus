@@ -248,6 +248,7 @@ To roll back the most recent migration:
 
 ```bash
 migrate -path backend/migrations -database "$DATABASE_URL" down 1
+migrate -path ./migrations -database "postgres://postgres:1981@localhost:5432/URL_Shortner?sslmode=disable" down 1
 ```
 
 ---

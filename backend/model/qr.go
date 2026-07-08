@@ -23,13 +23,13 @@ type QRCode struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
-	ShortCode string `json:"short_code" gorm:"not null"`
 	UserID      uint       `json:"user_id"`
+	ShortCode   string     `json:"short_code" gorm:"not null"`
 	OriginalURL string     `gorm:"not null" json:"original_url"`
-	Label       string     `json:"label"` // optional friendly name
-	ScanCount   uint64     `gorm:"default:0;index" json:"scan_count"`
+	Label       string     `json:"label"`                                 // optional friendly name
 	ImagePath   string     `gorm:"not null;default:''" json:"image_path"` // e.g. "qr/42.png"
 	ExpiresAt   *time.Time `gorm:"index" json:"expires_at"`               // 6 hours after creation
+	ScanCount   int64      `gorm:"-" json:"scan_count"`                   // populated via subquery in FindByUserID
 }
 
 // QRScan records every scan event for analytics — same pattern as Clicks.
