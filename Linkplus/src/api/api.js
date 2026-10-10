@@ -344,6 +344,7 @@ export async function downloadQRImage(id, filename) {
 export const getQRDailyScans    = ()   => request("/api/v4/qr/analytics/daily",     {}, true);
 export const getQRDailyScansByID = (id) => request(`/api/v4/qr/analytics/daily/${id}`, {}, true);
 export const getQRDeviceBreakdown = ()  => request("/api/v4/qr/analytics/devices",  {}, true);
+export const getQRCountryBreakdown = () => request("/api/v4/qr/analytics/countries", {}, true);
 export const getQRTotalScans    = ()   => request("/api/v4/qr/analytics/total",     {}, true);
 
 // ── Admin ─────────────────────────────────────────────────────────────────────

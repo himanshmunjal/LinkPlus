@@ -300,6 +300,7 @@ import {
   getQRTotalScans,
   getQRDailyScans,
   getQRDeviceBreakdown,
+  getQRCountryBreakdown,
   getMyQRs,
 } from "../api/api";
 import { PageHeader, Card, ErrorBanner } from "../components/ui";
@@ -641,6 +642,164 @@ function ShortURLAnalytics() {
 //   );
 // }
 
+// ── QR Code Analytics ─────────────────────────────────────────────────────────
+
+const QR_POLL_MS = 15_000;
+
+function QRAnalytics() {
+  const [totalScans, setTotalScans] = useState(null);
+  const [dailyScans, setDailyScans] = useState([]);
+  const [devices,    setDevices]    = useState([]);
+  const [countries,  setCountries]  = useState([]);
+  const [qrList,     setQRList]     = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      Promise.all([
+        getQRTotalScans(),
+        getQRDailyScans(),
+        getQRDeviceBreakdown(),
+        getQRCountryBreakdown(),
+        getMyQRs(),
+      ])
+        .then(([total, daily, devs, ctry, qrs]) => {
+          if (cancelled) return;
+          setTotalScans(total?.total_scans ?? 0);
+          setDailyScans(daily ?? []);
+          setDevices(devs ?? []);
+          setCountries(ctry ?? []);
+          setQRList(qrs ?? []);
+          setError(null);
+        })
+        .catch((e) => !cancelled && setError(e.message))
+        .finally(() => !cancelled && setLoading(false));
+
+    load();
+    // Poll so scans from a phone show up without a manual refresh
+    const timer = setInterval(load, QR_POLL_MS);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
+
+  const rankedQRs = useMemo(
+    () => [...qrList].sort((a, b) => (b.scan_count ?? 0) - (a.scan_count ?? 0)),
+    [qrList]
+  );
+
+  const deviceData = useMemo(
+    () => devices.map((d, i) => ({ name: d.device || "Unknown", value: d.count, color: DEVICE_COLORS[i % DEVICE_COLORS.length] })),
+    [devices]
+  );
+
+  const countryData = useMemo(
+    () => countries.slice(0, 10).map((c, i) => ({ code: c.country || "Unknown", count: c.count, color: COUNTRY_COLORS[i % COUNTRY_COLORS.length] })),
+    [countries]
+  );
+
+  const topQRData = useMemo(
+    () => rankedQRs.slice(0, 10).map((q) => ({ code: q.label || `QR #${q.id}`, scans: q.scan_count ?? 0 })),
+    [rankedQRs]
+  );
+
+  if (error) return <ErrorBanner>{error}</ErrorBanner>;
+
+  const top = rankedQRs[0];
+
+  return (
+    <div className="space-y-6">
+      {/* Stats row */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <StatsCard
+          label="Total scans"
+          value={loading ? "…" : formatNumber(totalScans ?? 0)}
+          sub="across all your QR codes"
+          icon={ScanLine}
+        />
+        <StatsCard
+          label="Top QR scans"
+          value={loading ? "…" : formatNumber(top?.scan_count ?? 0)}
+          sub={top ? (top.label || `QR #${top.id}`) : "—"}
+          icon={Trophy}
+          tone="success"
+        />
+        <StatsCard
+          label="Active QR codes"
+          value={loading ? "…" : formatNumber(qrList.length)}
+          icon={QrCode}
+        />
+      </div>
+
+      {/* Row 1: Daily scans trend + Device breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="p-6">
+          <h2 className="font-semibold text-zinc-900 dark:text-white mb-1 flex items-center gap-2">
+            <TrendingUp className="w-4 h-4" /> Daily scans
+          </h2>
+          <p className="text-xs text-zinc-400 mb-4">Combined scans across all QR codes</p>
+          {loading ? <ChartSkeleton height={200} /> : (
+            <AreaTrend data={dailyScans} xKey="date" yKey="scans" height={200} color="var(--chart-blue)" />
+          )}
+        </Card>
+
+        <Card className="p-6">
+          <h2 className="font-semibold text-zinc-900 dark:text-white mb-1 flex items-center gap-2">
+            <Smartphone className="w-4 h-4" /> Device breakdown
+          </h2>
+          <p className="text-xs text-zinc-400 mb-4">Scans by device type</p>
+          {loading ? <ChartSkeleton height={180} /> : deviceData.length === 0 ? <ChartEmpty /> : (
+            <>
+              <DonutStat
+                data={deviceData}
+                height={180}
+                centerLabel="scans"
+                centerValue={formatNumber(deviceData.reduce((s, d) => s + d.value, 0))}
+              />
+              <div className="mt-4"><ChartLegend data={deviceData} /></div>
+            </>
+          )}
+        </Card>
+      </div>
+
+      {/* Row 2: Top countries + Top QR codes */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="p-6">
+          <h2 className="font-semibold text-zinc-900 dark:text-white mb-1 flex items-center gap-2">
+            <Globe className="w-4 h-4" /> Top countries
+          </h2>
+          <p className="text-xs text-zinc-400 mb-4">Scans by country (top 10)</p>
+          {loading ? <ChartSkeleton height={200} /> : countryData.length === 0 ? <ChartEmpty /> : (
+            <BarTrend
+              data={countryData}
+              xKey="code"
+              yKey="count"
+              height={200}
+              color="var(--chart-blue)"
+              barName="Scans"
+            />
+          )}
+        </Card>
+
+        <Card className="p-6">
+          <h2 className="font-semibold text-zinc-900 dark:text-white mb-1">Top QR codes</h2>
+          <p className="text-xs text-zinc-400 mb-4">Ranked by total scans</p>
+          {loading ? <ChartSkeleton height={200} /> : topQRData.every((d) => d.scans === 0) ? <ChartEmpty /> : (
+            <BarTrend
+              data={topQRData}
+              xKey="code"
+              yKey="scans"
+              height={200}
+              color="var(--chart-success)"
+              barName="Scans"
+            />
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Analytics page with tabs ─────────────────────────────────────────────
 
 export default function Analytics() {
@@ -656,11 +815,11 @@ export default function Analytics() {
       {/* Tab row */}
       <div className="flex items-center gap-2">
         <Tab active={tab === "url"} onClick={() => setTab("url")} icon={Link2} label="Short URLs" />
-        {/* <Tab active={tab === "qr"}  onClick={() => setTab("qr")}  icon={QrCode} label="QR Codes"  /> */}
+        <Tab active={tab === "qr"}  onClick={() => setTab("qr")}  icon={QrCode} label="QR Codes"  />
       </div>
 
       {tab === "url" && <ShortURLAnalytics />}
-      {/* {tab === "qr"  && <QRAnalytics />} */}
+      {tab === "qr"  && <QRAnalytics />}
     </div>
   );
 }
