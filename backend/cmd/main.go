@@ -52,7 +52,7 @@ func main() {
 
 	cacheService := service.NewCacheService(jcacheClient)
 	urlService := service.NewURLService(urlRep, cacheService)
-	analyticsService := service.NewURLAnalyticsService(urlRep)
+	analyticsService := service.NewURLAnalyticsService(urlRep, qrRep)
 	authService := service.NewAuthService(userRep, refreshRep)
 	qrService := service.NewQRService(qrRep, urlService, os.Getenv("BASE_URL"))
 
@@ -186,6 +186,7 @@ func main() {
 	protected.GET("/qr/analytics/daily", qrHandler.GetDailyScans)
 	protected.GET("/qr/analytics/daily/:id", qrHandler.GetDailyScansByQR)
 	protected.GET("/qr/analytics/devices", qrHandler.GetDeviceBreakdown)
+	protected.GET("/qr/analytics/countries", qrHandler.GetCountryBreakdown)
 	protected.GET("/qr/analytics/total", qrHandler.GetTotalScans)
 
 	// Admin-only routes (authenticated + role == "admin")

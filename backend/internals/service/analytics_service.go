@@ -7,72 +7,67 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log"
-	"strings"
 	"time"
 )
 
 type URLAnalytics struct {
-	repo *repository.URLRepository
+	repo   *repository.URLRepository
+	qrRepo *repository.QRRepository
 }
 
-func NewURLAnalyticsService(repo *repository.URLRepository) *URLAnalytics {
-	return &URLAnalytics{repo: repo}
+func NewURLAnalyticsService(repo *repository.URLRepository, qrRepo *repository.QRRepository) *URLAnalytics {
+	return &URLAnalytics{repo: repo, qrRepo: qrRepo}
 }
 
+// RecordClick logs one redirect event. The handler calls it in a goroutine so
+// the redirect response is never delayed by the DB write or GeoIP lookup.
+// QR-backed short codes (is_qr = true) are logged as QR scans instead of
+// link clicks, so each lands in its own analytics view.
 func (s *URLAnalytics) RecordClick(shortCode string, userAgent string, clientIP string) {
-	// Execute tracking inside a separate thread so client browser redirects are instant
-	go func() {
-		// 1. Look up the URL details in the database to fetch the true record ID
-		urlRecord, err := s.repo.FindURLbyShortCode(shortCode)
+	urlRecord, err := s.repo.FindURLbyShortCode(shortCode)
+	if err != nil {
+		return // Shortcode doesn't exist or was deleted, abort tracking
+	}
+
+	deviceType := parseDevice(userAgent)
+	ipHash := hashIP(clientIP)
+	loc := geo.Resolve(clientIP) // resolve the raw IP; only the hash is persisted
+
+	if urlRecord.IsQR {
+		qr, err := s.qrRepo.FindByShortCode(shortCode)
 		if err != nil {
-			return // Shortcode doesn't exist or was deleted, abort tracking
+			log.Printf("[analytics] qr lookup failed for %s: %v", shortCode, err)
+			return
 		}
-
-		// 2. Simple helper logic to parse basic client user agent strings
-		deviceType := "Desktop"
-		ua := strings.ToLower(userAgent)
-		if strings.Contains(ua, "android") {
-			deviceType = "Android"
-		} else if strings.Contains(ua, "iphone") || strings.Contains(ua, "ipad") {
-			deviceType = "iOS"
-		} else if strings.Contains(ua, "mobile") {
-			deviceType = "Mobile"
-		}
-
-		// 3. Construct your custom model instance layout
-		// clickEvent := &model.Clicks{
-		// 	URLID:     urlRecord.ID, // Dynamically maps '8' based on your payload example
-		// 	ShortCode: shortCode,
-		// 	Device:    deviceType,
-		// 	ClickedAt: time.Now(),
-		// }
-
-		// loc := geo.Resolve("clientIP")          // ← geo lookup (async, already in goroutine)
-		ipHash := hashIP(clientIP) // ← SHA-256 first 16 chars
-
-		// ip := c.ClientIP()
-		loc := geo.Resolve(ipHash)
-		log.Printf("IP = %s", ipHash)
-		log.Printf("Geo Response: %+v\n", loc)
-
-		clickEvent := &model.Clicks{
-			URLID:     urlRecord.ID,
-			ShortCode: shortCode,
-			Device:    (deviceType),
-			ClickedAt: time.Now(),
+		scan := &model.QRScan{
+			QRID:      qr.ID,
+			Device:    deviceType,
+			ScannedAt: time.Now(),
 			Country:   loc.Country,
-			City:      loc.City,
 			Region:    loc.Region,
+			City:      loc.City,
 			IPHash:    ipHash,
 		}
+		if err := s.qrRepo.LogScan(scan); err != nil {
+			log.Printf("[analytics] log scan failed for %s: %v", shortCode, err)
+		}
+		return
+	}
 
-		_ = s.repo.LogClick(clickEvent)
-	}()
+	clickEvent := &model.Clicks{
+		URLID:     urlRecord.ID,
+		ShortCode: shortCode,
+		Device:    deviceType,
+		ClickedAt: time.Now(),
+		Country:   loc.Country,
+		City:      loc.City,
+		Region:    loc.Region,
+		IPHash:    ipHash,
+	}
+	if err := s.repo.LogClick(clickEvent); err != nil {
+		log.Printf("[analytics] log click failed for %s: %v", shortCode, err)
+	}
 }
-
-// func parseDevice(userAgent string) string {
-// 	return userAgent // Replace with actual parsing logic if needed
-// }
 
 func hashIP(ip string) string {
 	h := sha256.Sum256([]byte(ip))

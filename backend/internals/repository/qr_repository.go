@@ -162,11 +162,20 @@ func (r *QRRepository) FindByID(id uint) (*model.QRCode, error) {
 func (r *QRRepository) FindByUserID(userID uint) ([]model.QRCode, error) {
 	var list []model.QRCode
 	err := r.db.
-		Select("qr_codes.*, COALESCE((SELECT COUNT(*) FROM qr_scans WHERE qr_scans.qr_id = qr_codes.id AND qr_scans.deleted_at IS NULL), 0) AS scan_count").
-		Where("qr_codes.user_id = ? AND qr_codes.deleted_at IS NULL", userID).
-		Order("qr_codes.created_at DESC").
+		Where("user_id = ?", userID).
+		Order("created_at DESC").
 		Find(&list).Error
 	return list, err
+}
+
+// FindByShortCode resolves the hidden short code a QR image encodes back to its QR row.
+func (r *QRRepository) FindByShortCode(shortCode string) (*model.QRCode, error) {
+	var qr model.QRCode
+	err := r.db.Where("short_code = ?", shortCode).First(&qr).Error
+	if err != nil {
+		return nil, err
+	}
+	return &qr, nil
 }
 
 func (r *QRRepository) Delete(id uint, userID uint) error {
@@ -234,13 +243,14 @@ func (r *QRRepository) GetDailyScansByUser(userID uint) ([]model.QRScansByDayRes
     return result, err
 }
 
-func (r *QRRepository) GetDailyScansByQR(qrID uint) ([]model.QRScansByDayResult, error) {
+func (r *QRRepository) GetDailyScansByQR(qrID uint, userID uint) ([]model.QRScansByDayResult, error) {
 	var result []model.QRScansByDayResult
 	err := r.db.Model(&model.QRScan{}).
-		Select("DATE(scanned_at) as date, COUNT(*) as scans").
-		Where("qr_id = ? AND deleted_at IS NULL AND qr_id = true", qrID).
-		Group("DATE(scanned_at)").
-		Order("DATE(scanned_at) ASC").
+		Select("DATE(qr_scans.scanned_at) as date, COUNT(*) as scans").
+		Joins("JOIN qr_codes ON qr_codes.id = qr_scans.qr_id").
+		Where("qr_scans.qr_id = ? AND qr_codes.user_id = ? AND qr_codes.deleted_at IS NULL AND qr_scans.deleted_at IS NULL", qrID, userID).
+		Group("DATE(qr_scans.scanned_at)").
+		Order("DATE(qr_scans.scanned_at) ASC").
 		Scan(&result).Error
 	return result, err
 }
@@ -295,7 +305,7 @@ func (r *QRRepository) GetCountryBreakdownByUser(userID uint) ([]model.URLCountr
     err := r.db.Model(&model.QRScan{}).
         Select("COALESCE(NULLIF(qr_scans.country, ''), 'Unknown') as country, COUNT(*) as count").
         Joins("JOIN qr_codes ON qr_codes.id = qr_scans.qr_id").
-        Where("qr_codes.user_id = ? AND qr_codes.deleted_at IS NULL AND qr_scans.deleted_at IS NULL AND qr_id = true", userID).
+        Where("qr_codes.user_id = ? AND qr_codes.deleted_at IS NULL AND qr_scans.deleted_at IS NULL", userID).
         Group("qr_scans.country").
         Order("count DESC").
         Limit(10).

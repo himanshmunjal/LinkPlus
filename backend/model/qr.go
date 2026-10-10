@@ -6,8 +6,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// QRCode represents a QR code entry that points directly to an original URL.
-// No short-code is generated — the QR image encodes the original URL itself.
+// QRCode represents a QR code backed by a hidden short URL. The QR image
+// encodes BASE_URL/r/<short_code>, so every scan goes through the redirect
+// pipeline and is logged to qr_scans before forwarding to OriginalURL.
 // PNGs are written to disk (qr/<id>.png) on creation and read back on every
 // fetch — never regenerated. Each code expires 6 hours after creation.
 //
@@ -29,7 +30,7 @@ type QRCode struct {
 	Label       string     `json:"label"`                                 // optional friendly name
 	ImagePath   string     `gorm:"not null;default:''" json:"image_path"` // e.g. "qr/42.png"
 	ExpiresAt   *time.Time `gorm:"index" json:"expires_at"`               // 6 hours after creation
-	ScanCount   int64      `gorm:"-" json:"scan_count"`                   // populated via subquery in FindByUserID
+	ScanCount   int64      `gorm:"not null;default:0" json:"scan_count"`  // incremented atomically in LogScan
 }
 
 // QRScan records every scan event for analytics — same pattern as Clicks.

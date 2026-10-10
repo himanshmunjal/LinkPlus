@@ -334,7 +334,8 @@ func (h *QRHandler) GetDailyScansByQR(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
-	data, err := h.QRService.GetDailyScansByQR(id)
+	userID := middleware.CurrentUserID(c)
+	data, err := h.QRService.GetDailyScansByQR(id, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -346,6 +347,17 @@ func (h *QRHandler) GetDailyScansByQR(c *gin.Context) {
 func (h *QRHandler) GetDeviceBreakdown(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	data, err := h.QRService.GetDeviceBreakdown(uint(userID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, data)
+}
+
+// GET /api/v1/qr/analytics/countries  — top countries for this user's QR scans.
+func (h *QRHandler) GetCountryBreakdown(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	data, err := h.QRService.GetCountryBreakdown(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

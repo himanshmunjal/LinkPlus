@@ -1,12 +1,9 @@
 package service
 
 import (
-	"backend/internals/geo"
 	"backend/internals/repository"
 	"backend/model"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -118,32 +115,16 @@ func (s *QRService) Delete(qrID uint, userID uint) error {
 	if err := s.repo.Delete(qrID, userID); err!=nil{
 		return err
 	}
+	// The QR image points at /r/<short_code>; remove that link too so old prints stop resolving.
+	if err := s.urlService.DeleteURL(qr.ShortCode, int(userID)); err != nil && err != ErrURLNotFound {
+		log.Printf("[qr-delete] failed to remove link %s: %v", qr.ShortCode, err)
+	}
 	if qr.ImagePath != "" {
 		if err := os.Remove(qr.ImagePath); err != nil && !os.IsNotExist(err) {
 			log.Printf("[qr-delete] failed to remove image file %s: %v", qr.ImagePath, err)
 		}
 	}
 	return nil
-}
-
-// RecordScan logs a scan event asynchronously so the redirect/response is never delayed.
-func (s *QRService) RecordScan(qrID uint, userAgent string, clientIP string) {
-	go func() {
-		deviceType := parseDevice(userAgent)
-		ipHash := hashIPQR(clientIP)
-		loc := geo.Resolve(clientIP)
-
-		scan := &model.QRScan{
-			QRID:      qrID,
-			Device:    deviceType,
-			IPHash:    ipHash,
-			ScannedAt: time.Now(),
-			Country:   loc.Country,
-			City:      loc.City,
-			Region:    loc.Region, // was loc.City — region now stores the actual region
-		}
-		_ = s.repo.LogScan(scan)
-	}()
 }
 
 // CleanupExpired deletes expired QR rows and their on-disk PNGs.
@@ -170,12 +151,16 @@ func (s *QRService) GetDailyScansByUser(userID uint) ([]model.QRScansByDayResult
 	return s.repo.GetDailyScansByUser(userID)
 }
 
-func (s *QRService) GetDailyScansByQR(qrID uint) ([]model.QRScansByDayResult, error) {
-	return s.repo.GetDailyScansByQR(qrID)
+func (s *QRService) GetDailyScansByQR(qrID uint, userID uint) ([]model.QRScansByDayResult, error) {
+	return s.repo.GetDailyScansByQR(qrID, userID)
 }
 
 func (s *QRService) GetDeviceBreakdown(userID uint) ([]model.QRDeviceResult, error) {
 	return s.repo.GetDeviceBreakdownByUser(userID)
+}
+
+func (s *QRService) GetCountryBreakdown(userID uint) ([]model.URLCountryResult, error) {
+	return s.repo.GetCountryBreakdownByUser(userID)
 }
 
 func (s *QRService) GetTotalScans(userID uint) (int64, error) {
@@ -208,9 +193,4 @@ func parseDevice(userAgent string) string {
 	default:
 		return "Desktop"
 	}
-}
-
-func hashIPQR(ip string) string {
-	h := sha256.Sum256([]byte(ip))
-	return hex.EncodeToString(h[:])[:16]
 }
