@@ -211,7 +211,18 @@ export function clearAuth() {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
-async function refreshAccessToken() {
+// Requests that get a 401 at the same time share one refresh. Each refresh
+// token works once, and the server ends the session if one is reused.
+let refreshInFlight = null;
+
+function refreshAccessToken() {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefresh().finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
+async function doRefresh() {
   const refreshToken = getRefreshToken();
   if (!refreshToken) throw new Error("No refresh token available");
 

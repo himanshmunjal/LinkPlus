@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log"
 	"strings"
 	"time"
 	"unicode"
@@ -18,6 +19,7 @@ var (
 	ErrEmailTaken    = errors.New("an account with this email already exists")
 	ErrUsernameTaken = errors.New("this username is already taken")
 	ErrInvalidCreds  = errors.New("incorrect email or password")
+	ErrInvalidRefresh = errors.New("invalid or expired refresh token")
 	ErrWeakPassword  = errors.New("password must be at least 8 characters and contain a number")
 )
 
@@ -201,14 +203,22 @@ func (s *AuthService) Rotate(rawRefreshToken string) (newAccess, newRefresh stri
     hash := auth.HashToken(rawRefreshToken)
     stored, err := s.refreshRepo.FindByHash(hash)
     if err != nil {
-        // Token not found or expired — possible reuse attack
-        // If family exists, revoke all tokens in that family
-        return "", "", errors.New("invalid or expired refresh token")
+        // A token that was already used is being replayed: revoke its whole
+        // family so the stolen copy and anything issued from it stop working.
+        if used, findErr := s.refreshRepo.FindRevokedByHash(hash); findErr == nil {
+            s.revokeFamily(used.Family)
+        }
+        return "", "", ErrInvalidRefresh
     }
 
-    // Revoke the used token
-    if err = s.refreshRepo.RevokeByHash(hash); err != nil {
+    // Revoke the used token; losing this race means the token was used twice.
+    revoked, err := s.refreshRepo.RevokeByHash(hash)
+    if err != nil {
         return
+    }
+    if !revoked {
+        s.revokeFamily(stored.Family)
+        return "", "", ErrInvalidRefresh
     }
 
     // Fetch user for new claims
@@ -225,4 +235,16 @@ func (s *AuthService) Rotate(rawRefreshToken string) (newAccess, newRefresh stri
     // Issue new refresh token in same family (rotation)
     newRefresh, err = s.issueRefreshToken(user.ID, stored.Family)
     return
+}
+
+// revokeFamily ends every session descended from one login. Tokens created
+// before families existed have an empty family and are skipped, since
+// revoking "" would log out every such user.
+func (s *AuthService) revokeFamily(family string) {
+    if family == "" {
+        return
+    }
+    if err := s.refreshRepo.RevokeByFamily(family); err != nil {
+        log.Printf("[auth] failed to revoke token family: %v", err)
+    }
 }
