@@ -2,14 +2,16 @@ module backend
 
 go 1.25.0
 
-require gorm.io/driver/postgres v1.6.0
+require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+	gorm.io/driver/postgres v1.6.0
+)
 
 require (
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
-	github.com/golang-migrate/migrate/v4 v4.19.1 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/oschwald/maxminddb-golang v1.13.1 // indirect
-	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // indirect
 )
 
 require (
@@ -21,7 +23,7 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gin-contrib/cors v1.7.7
 	github.com/gin-contrib/sse v1.1.0 // indirect
-	github.com/gin-gonic/gin v1.12.0 // indirect
+	github.com/gin-gonic/gin v1.12.0
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
@@ -44,17 +46,17 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.0 // indirect
-	github.com/redis/go-redis/v9 v9.20.1 // indirect
+	github.com/redis/go-redis/v9 v9.20.1
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/arch v0.23.0 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
+	golang.org/x/crypto v0.48.0
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
-	gorm.io/gorm v1.31.1 // indirect
+	gorm.io/gorm v1.31.1
 )

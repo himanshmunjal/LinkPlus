@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"backend/internals/cache"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -9,23 +8,29 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Limit returns a Gin middleware that enforces a sliding-window rate limit
-// using Redis. Each unique IP gets its own counter scoped by `name` so that
+// RateLimiter is a sliding-window-log rate limit store. cache.JCacheClient and
+// cache.RedisClient both satisfy it.
+type RateLimiter interface {
+	RateLimit(key string, maxRequests int, windowSeconds int) (allowed bool, current int, err error)
+}
+
+// Limit returns a Gin middleware that enforces a sliding-window-log rate
+// limit. Each unique IP gets its own counter scoped by `name` so that
 // different routes never share state.
 //
 // Usage:
-//   r.POST("/auth/login",  middleware.Limit(redisClient, "login",    5,  60))
-//   r.GET("/r/:code",      middleware.Limit(redisClient, "redirect", 60, 60))
-//   r.POST("/url",         middleware.Limit(redisClient, "url",      10, 60))
-//   r.POST("/qr",          middleware.Limit(redisClient, "qr",       5,  60))
-func Limit(redis *cache.RedisClient, name string, maxRequests int, windowSeconds int) gin.HandlerFunc {
+//   r.POST("/auth/login",  middleware.Limit(jcacheClient, "login",    5,  60))
+//   r.GET("/r/:code",      middleware.Limit(jcacheClient, "redirect", 60, 60))
+//   r.POST("/url",         middleware.Limit(jcacheClient, "url",      10, 60))
+//   r.POST("/qr",          middleware.Limit(jcacheClient, "qr",       5,  60))
+func Limit(limiter RateLimiter, name string, maxRequests int, windowSeconds int) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// "rl:login:192.168.1.1" — prefix + name + IP keeps keys readable in Redis.
+		// "rl:login:192.168.1.1" — prefix + name + IP keeps keys readable in the cache.
 		key := fmt.Sprintf("rl:%s:%s", name, c.ClientIP())
 
-		allowed, current, err := redis.RateLimit(key, maxRequests, windowSeconds)
+		allowed, current, err := limiter.RateLimit(key, maxRequests, windowSeconds)
 		if err != nil {
-			// Redis is down — fail open so a cache outage doesn't take down the
+			// The cache is down — fail open so a cache outage doesn't take down the
 			// whole API. Log it but let the request through.
 			c.Header("X-RateLimit-Error", "cache unavailable")
 			c.Next()

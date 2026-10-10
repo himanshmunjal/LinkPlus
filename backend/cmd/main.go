@@ -33,21 +33,15 @@ func main() {
 
 	db := repository.DBConnect()
 
-	// jcacheHost := getEnv("JCACHE_HOST", "localhost")
-	// jcachePort := getEnvInt("JCACHE_PORT", 6379)
+	jcacheHost := getEnv("JCACHE_HOST", "localhost")
+	jcachePort := getEnvInt("JCACHE_PORT", 6379)
 
-	// jcacheClient, err := cache.NewJCacheClient(jcacheHost, jcachePort)
-	// if err != nil {
-	// 	log.Fatalf("Fatal: Failed to connect to JCache: %v", err)
-	// }
-	// defer jcacheClient.Close()
-	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
-	redisClient, err := cache.NewRedisClient(redisAddr)
+	jcacheClient, err := cache.NewJCacheClient(jcacheHost, jcachePort)
 	if err != nil {
-		log.Fatalf("Fatal: Redis connection failed: %v", err)
+		log.Fatalf("Fatal: Failed to connect to JCache: %v", err)
 	}
-	defer redisClient.Close()
-	fmt.Printf("Redis connected: %s\n", redisAddr)
+	defer jcacheClient.Close()
+	fmt.Printf("JCache connected: %s:%d\n", jcacheHost, jcachePort)
 
 	// frontend := getEnv("BACKEND_ORIGIN","http://localhost:8080")
 
@@ -56,8 +50,7 @@ func main() {
 	refreshRep := repository.NewRefreshTokenRepository(db)
 	qrRep      := repository.NewQRRepository(db)
 
-	// cacheService := service.NewCacheService(jcacheClient)
-	cacheService := service.NewCacheService(redisClient)
+	cacheService := service.NewCacheService(jcacheClient)
 	urlService := service.NewURLService(urlRep, cacheService)
 	analyticsService := service.NewURLAnalyticsService(urlRep)
 	authService := service.NewAuthService(userRep, refreshRep)
@@ -65,8 +58,8 @@ func main() {
 
 	urlHandler := handlers.NewURLHandler(urlService, analyticsService)
 	authHandler := handlers.NewAuthHandler(authService)
-	// cacheHandler := handlers.NewCacheHandler(jcacheClient)
-	qrHandler    := handlers.NewQRHandler(qrService)
+	cacheHandler := handlers.NewCacheHandler(jcacheClient)
+	qrHandler   := handlers.NewQRHandler(qrService)
 
 	ctx1, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -87,17 +80,18 @@ func main() {
 	}))
 
 	// Public redirect
-	r.GET("/r/:code", urlHandler.RedirectURL)
-	r.HEAD("/r/:code", urlHandler.RedirectURL)
+	redirectLimit := middleware.Limit(jcacheClient, "redirect", 60, 60)
+	r.GET("/r/:code", redirectLimit, urlHandler.RedirectURL)
+	r.HEAD("/r/:code", redirectLimit, urlHandler.RedirectURL)
 
 	api := r.Group("/api/v4")
 
 	// Auth (public)
 	authRoutes := api.Group("/auth")
 	{
-		authRoutes.POST("/signup", authHandler.Signup)
-		authRoutes.POST("/login", authHandler.Login)
-		authRoutes.POST("/refresh", authHandler.Refresh)
+		authRoutes.POST("/signup", middleware.Limit(jcacheClient, "signup", 5, 60), authHandler.Signup)
+		authRoutes.POST("/login", middleware.Limit(jcacheClient, "login", 5, 60), authHandler.Login)
+		authRoutes.POST("/refresh", middleware.Limit(jcacheClient, "refresh", 20, 60), authHandler.Refresh)
 
 	}
 
@@ -107,7 +101,7 @@ func main() {
 	{
 		protected.GET("/auth/me", authHandler.Me)
 
-		protected.POST("/url", urlHandler.CreateShortURL) // middleware.SlidingWindowLimiter(middleware.KeyByUserID, 10, time.Minute)
+		protected.POST("/url", middleware.Limit(jcacheClient, "url", 10, 60), urlHandler.CreateShortURL)
 		protected.GET("/url", urlHandler.GetMyURLs)
 		protected.DELETE("/url/:code", urlHandler.DeleteURL)
 
@@ -183,7 +177,7 @@ func main() {
 		})
 	}
 
-	protected.POST("/qr", qrHandler.CreateQR)
+	protected.POST("/qr", middleware.Limit(jcacheClient, "qr", 5, 60), qrHandler.CreateQR)
 	protected.GET("/qr", qrHandler.ListQRs)
 	protected.GET("/qr/:id/image", qrHandler.GetQRImage)
 	protected.GET("/qr/:id/base64", qrHandler.GetQRBase64)
@@ -195,12 +189,12 @@ func main() {
 	protected.GET("/qr/analytics/total", qrHandler.GetTotalScans)
 
 	// Admin-only routes (authenticated + role == "admin")
-	// admin := api.Group("/admin")
-	// admin.Use(middleware.RequireAuth(), middleware.RequireAdmin())
-	// {
-	// 	// JCache metrics — admin only
-	// 	admin.GET("/cache/stats", cacheHandler.GetCacheStats)
-	// }
+	admin := api.Group("/admin")
+	admin.Use(middleware.RequireAuth(), middleware.RequireAdmin())
+	{
+		// JCache metrics — admin only
+		admin.GET("/cache/stats", cacheHandler.GetCacheStats)
+	}
 
 	// Graceful shutdown
 	port := getEnv("PORT", "8080")

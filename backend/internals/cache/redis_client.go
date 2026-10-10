@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -81,35 +82,53 @@ func (r *RedisClient) Close() error {
 	return r.client.Close()
 }
 
+// rateLimitScript implements a sliding-window log: each request is a member of
+// a sorted set scored by its timestamp (ms). Entries older than the window are
+// trimmed, and the request is admitted only if fewer than the limit remain.
+// Running it as one Lua script keeps trim + count + add atomic across replicas.
 var rateLimitScript = redis.NewScript(`
-	local count = redis.call("INCR", KEYS[1])
-	if count == 1 then
-		redis.call("EXPIRE", KEYS[1], ARGV[1])
+	local key    = KEYS[1]
+	local now    = tonumber(ARGV[1])
+	local window = tonumber(ARGV[2])
+	local limit  = tonumber(ARGV[3])
+	local member = ARGV[4]
+
+	redis.call("ZREMRANGEBYSCORE", key, 0, now - window)
+	local count = redis.call("ZCARD", key)
+	if count < limit then
+		redis.call("ZADD", key, now, member)
+		redis.call("PEXPIRE", key, window)
+		return {1, count + 1}
 	end
-	return count
+	return {0, count}
 `)
 
-// RateLimit checks whether the IP identified by key has exceeded maxRequests
-// in the last windowSeconds.
+// RateLimit checks whether the caller identified by key has exceeded
+// maxRequests in the trailing windowSeconds (sliding window, not fixed buckets).
 //
 // Returns:
 //   allowed  — false means the caller should receive a 429
-//   current  — requests made in this window (use for X-RateLimit-Remaining)
+//   current  — requests counted in the current window
 //   err      — only set on a Redis failure, not on a breach
 //
 // Key naming convention: callers should prefix by route to keep counters
 // isolated, e.g. "rl:login:192.168.1.1", "rl:redirect:192.168.1.1".
 func (r *RedisClient) RateLimit(key string, maxRequests int, windowSeconds int) (allowed bool, current int, err error) {
-	result, err := rateLimitScript.Run(
+	now := time.Now()
+	member := fmt.Sprintf("%d-%d", now.UnixNano(), rand.Int63())
+
+	res, err := rateLimitScript.Run(
 		r.ctx,
 		r.client,
 		[]string{key},
-		windowSeconds,
-	).Int()
-
+		now.UnixMilli(),
+		windowSeconds*1000,
+		maxRequests,
+		member,
+	).Int64Slice()
 	if err != nil {
 		return false, 0, fmt.Errorf("redis: rate limit script: %w", err)
 	}
 
-	return result <= maxRequests, result, nil
+	return res[0] == 1, int(res[1]), nil
 }
