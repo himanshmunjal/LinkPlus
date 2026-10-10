@@ -3,6 +3,7 @@ package handlers
 import (
 	"backend/internals/middleware"
 	"backend/internals/service"
+	"errors"
 	"net/http"
 	"time"
 
@@ -70,8 +71,10 @@ func (h *URLHandler) RedirectURL(c *gin.Context) {
 		return
 	}
 
-	// go h.URLService.IncrementClickCount(shortCode)
-	go h.AnalyticsService.RecordClick(shortCode, c.Request.UserAgent(), c.ClientIP())
+	// Only real visits are tracked — HEAD probes (link previews, uptime checks) are not.
+	if c.Request.Method == http.MethodGet {
+		go h.AnalyticsService.RecordClick(shortCode, c.Request.UserAgent(), c.ClientIP())
+	}
 
 	c.Redirect(http.StatusFound, originalURL)
 }
@@ -94,7 +97,12 @@ func (h *URLHandler) DeleteURL(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "short code is required"})
 		return
 	}
-	if err := h.URLService.DeleteURL(shortCode); err != nil {
+	err := h.URLService.DeleteURL(shortCode, int(middleware.CurrentUserID(c)))
+	if errors.Is(err, service.ErrURLNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

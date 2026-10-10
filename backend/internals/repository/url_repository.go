@@ -46,8 +46,10 @@ func (r *URLRepository) IncrementClickCount(shortCode string) error {
         Error
 }
 
-func(r *URLRepository) Delete(shortCode string) error{
-	return r.db.Unscoped().Where("short_code = ?", shortCode).Delete(&model.URL{}).Error
+// Delete removes a link owned by userID and reports whether one was removed.
+func(r *URLRepository) Delete(shortCode string, userID uint) (bool, error){
+	res := r.db.Unscoped().Where("short_code = ? AND user_id = ?", shortCode, userID).Delete(&model.URL{})
+	return res.RowsAffected > 0, res.Error
 }
 
 func (r *URLRepository) FindByUser(userID int) ([]model.URL, error) {

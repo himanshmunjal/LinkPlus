@@ -49,11 +49,11 @@ func(s *URLService) CreateShortURL(originalURL string, userID int, expiresAt *ti
         }
         cacheTTL = ttl
     }
-    err = s.cache.Put(shortCode, originalURL, cacheTTL)
-	if err!=nil{
-		return nil, err
-	}
-	return urlModel, err
+    // The link is already saved; a cache outage only costs the first redirect a database read.
+    if err := s.cache.Put(shortCode, originalURL, cacheTTL); err != nil {
+        fmt.Println("CACHE PUT FAILED:", err)
+    }
+	return urlModel, nil
 }
 
 func (s *URLService) CreateQRShortCode(originalURL string, userID int, expiresAt *time.Time) (*model.URL, error) {
@@ -84,14 +84,28 @@ func (s *URLService) CreateQRShortCode(originalURL string, userID int, expiresAt
     }
 
     if err := s.cache.Put(shortCode, originalURL, cacheTTL); err != nil {
-        return nil, err
+        fmt.Println("CACHE PUT FAILED:", err)
     }
 
     return urlModel, nil
 }
 
-func(s *URLService) DeleteURL(shortCode string) error{
-	return s.repo.Delete(shortCode)
+// ErrURLNotFound is returned when the link does not exist or belongs to another user.
+var ErrURLNotFound = errors.New("short code not found")
+
+// DeleteURL removes the caller's link and evicts it so it stops redirecting at once.
+func(s *URLService) DeleteURL(shortCode string, userID int) error{
+	deleted, err := s.repo.Delete(shortCode, uint(userID))
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return ErrURLNotFound
+	}
+	if err := s.cache.Delete(shortCode); err != nil {
+		fmt.Println("CACHE DELETE FAILED:", err)
+	}
+	return nil
 }
 
 func(s *URLService) GetURLsByUserID(userID int) ([]model.URL ,error){
@@ -141,6 +155,10 @@ func (s *URLService) Resolve(shortCode string) (string, error) {
     urlRecord, err := s.repo.GetWithExpiry(shortCode)
     if err != nil {
         return "", err
+    }
+    // Scan() doesn't raise ErrRecordNotFound — an empty row means the code doesn't exist.
+    if urlRecord.OriginalURL == "" {
+        return "", errors.New("short code not found")
     }
 
 	if urlRecord.ExpiresAt != nil && time.Now().After(*urlRecord.ExpiresAt) {
